@@ -8,8 +8,8 @@ use ndarray_rand::rand_distr::Uniform;
 type FloatTensor = Array2<f32>;
 
 struct LayerDense {
-    weights: Array<f32, Dim<[usize; 2]>>,
-    biases: Array<f32, Dim<[usize; 2]>>,
+    weights: FloatTensor,
+    biases: FloatTensor,
     inputs: Option<FloatTensor>
 }
 
@@ -22,7 +22,7 @@ impl LayerDense {
         }
     }
 
-    fn forward(&mut self, inputs: Array<f32, Dim<[usize; 2]>>) -> Array<f32, Dim<[usize; 2]>> {
+    fn forward(&mut self, inputs: FloatTensor) -> FloatTensor {
         self.inputs = Some(inputs.clone());
         
         inputs.dot(&self.weights) + self.biases.clone()
@@ -86,18 +86,11 @@ struct SoftMax {
 impl SoftMax {
 
     fn forward(inputs: &FloatTensor) -> (FloatTensor, SoftMax) {
-        // let binding = inputs.clone();
-
-        let temp_maxes = inputs.clone().map_axis(Axis(1), |x| *x.view().max().unwrap());
-        let max_vec = temp_maxes.to_vec();
-        let maxes = ArrayView::from_shape((temp_maxes.len(),1), &max_vec).unwrap();
-
-        let i = inputs.clone() - maxes;
-
-        let exp_values = i.mapv(|x| x.exp());
-        let temp_sums = exp_values.map_axis(Axis(1), |x| x.sum());
-        let sums_vec = temp_sums.to_vec();
-        let sums = ArrayView::from_shape((temp_sums.len(), 1), &sums_vec).unwrap();
+        let mut maxes = inputs.map_axis(Axis(1), |x| *x.view().max().unwrap());
+        maxes.swap_axes(0, 1);
+        let exp_values = (inputs - maxes).mapv(|x| x.exp());
+        let mut sums = exp_values.map_axis(Axis(1), |x| x.sum());
+        sums.swap_axes(0, 1);
         let outputs = exp_values / sums;
         (   
             outputs.clone(),
@@ -108,19 +101,21 @@ impl SoftMax {
         )
     }
 
-    fn backward(&mut self, dvalues: FloatTensor) -> () {
+    fn backward(&mut self, dvalues: FloatTensor) -> FloatTensor {
         self.dinputs = Array2::zeros(dvalues.dim());
 
         let mut index: usize = 0;
-        for x in self.outputs.axis_iter_mut(Axis(1)) {
+        for row in self.outputs.axis_iter(Axis(1)) {
+            let mut x = row.clone();
             x.swap_axes(0, 1);
             let jacobian_matrix = Array2::from_diag(&x) - x.dot(&x.t());
-
             let mut axis_mut = self.dinputs.index_axis_mut(Axis(1), index);
-            let mut y_axis = dvalues.index_axis(Axis(1), index);
-            axis_mut = jacobian_matrix.dot(&y_axis);
+            let y_axis = dvalues.index_axis(Axis(1), index);
+            axis_mut.assign(&jacobian_matrix.dot(&y_axis));
+            index += 1;
         }
 
+        self.dinputs.clone()
     }
 }
 
@@ -136,16 +131,8 @@ fn main() {
 
     let mut out = layer1.forward(x);
     out = layer2.forward(out);
-    let (mut relu_out, _) = ReLu::forward(out);
-    let relu_out_copy = relu_out.clone();
+    let (relu_out, _) = ReLu::forward(out);
     println!("{:?}", relu_out);
-
-
-    println!("{}", "Look here");
-    for x in relu_out.axis_iter_mut(Axis(0)) {
-        println!("{:?}", x);
-        println!("Inverted {:?}", x.into_shape((relu_out_copy.len_of(Axis(1)), 1)));
-    }
 
     let y = arr2(
         & [[1.,2.,3.,2.5],
