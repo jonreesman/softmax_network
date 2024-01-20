@@ -1,0 +1,10 @@
+[package]
+name = "rust-nnfs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ndarray = { version = "0.15.6", features = ["blas"] }
+ndarray-linalg = { version = "0.16.0", features = ["openblas-system"] }
+ndarray-rand = "0.14.0"
+ndarray-stats = "0.5.1"
