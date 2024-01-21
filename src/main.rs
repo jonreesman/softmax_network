@@ -1,5 +1,5 @@
-use ndarray::stack;
 #[warn(dead_code)]
+use ndarray::{stack, Array1};
 use ndarray::{Array, Array2, arr2, Dim, Axis, ArrayView };
 use ndarray_stats::QuantileExt;
 use ndarray_rand::RandomExt;
@@ -127,6 +127,17 @@ impl SoftMax {
         }
 
         self.dinputs.clone()
+    }
+}
+
+pub trait Loss {
+    fn forward(&self, output: Array1<f32>, y: Array1<f32>) -> Array1<f32>;
+
+    fn calculate(&self, output: Array1<f32>, y: Array1<f32>) -> f32 {
+        let sample_losses = self.forward(output, y);
+        let data_loss = sample_losses.mean().unwrap();
+
+        data_loss
     }
 }
 
