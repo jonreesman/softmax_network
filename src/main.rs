@@ -1,3 +1,4 @@
+use ndarray::stack;
 #[warn(dead_code)]
 use ndarray::{Array, Array2, arr2, Dim, Axis, ArrayView };
 use ndarray_stats::QuantileExt;
@@ -10,7 +11,7 @@ type FloatTensor = Array2<f32>;
 struct LayerDense {
     weights: FloatTensor,
     biases: FloatTensor,
-    inputs: Option<FloatTensor>
+    inputs: FloatTensor
 }
 
 impl LayerDense {
@@ -18,28 +19,22 @@ impl LayerDense {
         LayerDense {
             weights: 0.1 * Array::<f32, _>::random([n_inputs, n_neurons], Uniform::new(-1., 1.)),
             biases: Array::<f32, _>::zeros([1, n_neurons]),
-            inputs: None
+            inputs: Array2::zeros([n_inputs, n_neurons])
         }
     }
 
     fn forward(&mut self, inputs: FloatTensor) -> FloatTensor {
-        self.inputs = Some(inputs.clone());
+        self.inputs = inputs.clone();
         
         inputs.dot(&self.weights) + self.biases.clone()
     }
 
-    fn backward(self, dvalues: FloatTensor) -> Option<FloatTensor> {
-        match self.inputs {
-            None => None,
-            Some(ins) => {
-                let _dweights = ins.t().dot(&dvalues);
-                let _dbiases = dvalues.map_axis(Axis(0), |x| x.view().sum());
-
-                let output = ins.dot(&self.weights.t());
+    fn backward(self, dvalues: FloatTensor) -> FloatTensor {
+        let _dweights = self.inputs.t().dot(&dvalues);
+        let _dbiases = dvalues.map_axis(Axis(0), |x| x.view().sum());
+        let output = self.inputs.dot(&self.weights.t());
                 
-                Some(output)
-            }
-        }
+        output
     }
 }
 
@@ -86,12 +81,28 @@ struct SoftMax {
 impl SoftMax {
 
     fn forward(inputs: &FloatTensor) -> (FloatTensor, SoftMax) {
-        let mut maxes = inputs.map_axis(Axis(1), |x| *x.view().max().unwrap());
-        maxes.swap_axes(0, 1);
-        let exp_values = (inputs - maxes).mapv(|x| x.exp());
-        let mut sums = exp_values.map_axis(Axis(1), |x| x.sum());
-        sums.swap_axes(0, 1);
-        let outputs = exp_values / sums;
+        // Resulting vector resembles:
+        // [1., 2., 3., 4.]
+        // But we need to reshape from Nx1 to 1xN
+        let maxes_1d = inputs.map_axis(Axis(1), |x| *x.view().max().unwrap());
+    
+        // First, we must add a dimension, making the output:
+        // [[1., 2., 3., 4.]]
+        let mut maxes_2d = stack!(Axis(0), maxes_1d);
+
+        // Swapping the axes here makes it resemble:
+        // [[1.],
+        //  [2.],
+        //  [3.],
+        //  [4.]]
+        maxes_2d.swap_axes(0, 1);
+        let exp_values = (inputs - maxes_2d).mapv(|x| x.exp());
+
+        // We must now do with sums what we did with the maxes.
+        let sums_1d = exp_values.map_axis(Axis(1), |x| x.sum());
+        let mut sums_2d = stack!(Axis(0), sums_1d);
+        sums_2d.swap_axes(0, 1);
+        let outputs = exp_values / sums_2d;
         (   
             outputs.clone(),
             SoftMax {
@@ -119,6 +130,8 @@ impl SoftMax {
     }
 }
 
+
+
 fn main() {
     let x = arr2(
         & [[1.,2.,3.,2.5],
@@ -139,6 +152,7 @@ fn main() {
          [2.0,5.0,-1.0,2.0],
          [-1.5,2.7,3.3,-0.8]]
     );
+
     let (outs, _) = SoftMax::forward(&y);
     println!("Softmax");
     println!("{:?}", outs)
