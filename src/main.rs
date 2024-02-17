@@ -1,6 +1,6 @@
 #[warn(dead_code)]
 use ndarray::{stack, Array1};
-use ndarray::{Array, Array2, arr2, Dim, Axis, ArrayView };
+use ndarray::{Array, Array2, arr2, Axis, IndexLonger };
 use ndarray_stats::QuantileExt;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
@@ -130,10 +130,98 @@ impl SoftMax {
     }
 }
 
-pub trait Loss {
-    fn forward(&self, output: Array1<f32>, y: Array1<f32>) -> Array1<f32>;
+pub trait Loss<Y> {
 
-    fn calculate(&self, output: Array1<f32>, y: Array1<f32>) -> f32 {
+    fn forward(&self, y_pred: FloatTensor, y_true: Y) -> Array1<f32>;
+
+    fn backward(&mut self, dvalues: FloatTensor, y_true: Y) -> FloatTensor;
+
+    fn calculate(self, output: FloatTensor, y: Y) -> f32;
+
+}
+
+struct CCLE {
+    dinputs: FloatTensor
+}
+
+impl Loss<Array1<f32>> for CCLE {
+    fn forward(&self, y_pred: FloatTensor, y_true: Array1<f32>) -> Array1<f32> {
+        let min = f32::powf(1.0, -7.);
+        let max = 1.0 - f32::powf(1.0, -7.);
+        let mut y_pred_clipped = y_pred;
+        for v in y_pred_clipped.iter_mut() {
+            if *v >  max {
+                *v = max;
+            }
+            if *v <  min {
+                *v = min;
+            }
+        }
+        let mut idx = 0;
+        let correct_confidence = y_pred_clipped.map_axis(Axis(1), |a| { 
+            idx += 1;
+            let col = y_true.view().index(idx-1).clone();
+            
+            let ret = a.view().index(col as usize).clone();
+
+            return ret
+        });
+
+        let negative_log_likelihoods = - correct_confidence.mapv(|x| x.ln());
+        
+        negative_log_likelihoods
+    }
+
+    fn backward(&mut self, dvalues: FloatTensor, y_true: Array1<f32>) -> FloatTensor {
+        let samples = dvalues.shape()[0];
+        
+        self.dinputs = - y_true / dvalues;
+
+        self.dinputs = self.dinputs.clone() / samples as f32;
+
+        self.dinputs.clone()
+    }
+
+    fn calculate(self, output: FloatTensor, y: Array1<f32>) -> f32 {
+        let sample_losses = self.forward(output, y);
+        let data_loss = sample_losses.mean().unwrap();
+
+        data_loss
+    }
+}
+
+impl Loss<FloatTensor> for CCLE {
+    fn forward(&self, y_pred: FloatTensor, y_true: FloatTensor) -> Array1<f32> {
+        let min = f32::powf(1.0, -7.);
+        let max = 1.0 - f32::powf(1.0, -7.);
+
+        let mut y_pred_clipped = y_pred;
+        for v in y_pred_clipped.iter_mut() {
+            if *v >  max {
+                *v = max;
+            }
+            if *v <  min {
+                *v = min;
+            }
+        }
+        let correct_confidence: Array1<f32> = (y_pred_clipped * y_true).map_axis(Axis(1), |x| x.view().sum());
+
+        let negative_log_likelihoods = - correct_confidence.mapv(|x| x.ln());
+        
+        negative_log_likelihoods
+    }
+
+    fn backward(&mut self, dvalues: FloatTensor, y_true: FloatTensor) -> FloatTensor {
+        let samples = dvalues.shape()[0];
+
+        self.dinputs = - y_true / dvalues;
+
+        self.dinputs = self.dinputs.clone() / samples as f32;
+
+        self.dinputs.clone()
+    }
+
+    fn calculate(self, output: FloatTensor, y: FloatTensor) -> f32 {
         let sample_losses = self.forward(output, y);
         let data_loss = sample_losses.mean().unwrap();
 
